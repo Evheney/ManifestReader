@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QProcess>
+#include <QString>
 #include <QTime>
 #include <QXmlStreamReader>
 #include <qtconcurrentmap.h>
@@ -11,50 +12,29 @@
 //using namespace QtConcurrent;
 
 /*
-bool XmlManifestReader::read(QIODevice *device)
-{
-    reader.setDevice(device);
-
-    if (reader.readNextStartElement()) {
-        if (reader.name() == "ePM-Xray") {
-            readEpmXrayInfo();
-
-            createComponents();
-            //readBoard();
-        }
-        else {
-            reader.raiseError(QObject::tr("Not a Scheme file"));
-        }
-    }
-
-
-    return !reader.error();
-}
-while(reader.readNextStartElement()){
-    if(reader.name() == "format") {
-        info.setFormatVer(reader.attributes().value("ver").toString());
-        info.setFormatName(reader.attributes().value("name").toString());
-        //scheme->addEpmXrayInfo(info);
-        reader.skipCurrentElement();
-    }
-
-*/
-/*
     Utility function that recursivily searches for files.
 */
 QStringList findFiles(const QString &startDir, const QStringList &filters)
 {
     QStringList names;
     QDir dir(startDir);
+    //qDebug() << dir.dirName();
 
     const auto files = dir.entryList(filters, QDir::Files);
-    for (const QString &file : files)
+    for (const QString &file : files) {
         names += startDir + '/' + file;
+        //qDebug() << startDir + '/' + file;
+    }
+
+
 
     const auto subdirs =  dir.entryList(QDir::AllDirs | QDir::NoDotAndDotDot);
-    for (const QString &subdir : subdirs)
-        names += findFiles(startDir + '/' + subdir, filters);
+        for (const QString &subdir : subdirs)
+             names += findFiles(startDir + '/' + subdir, filters);
+      // qDebug() << subdirs;
+
     return names;
+
 }
 
 int runBatchQtQProcessWaited(const std::string& BatchFile) {
@@ -64,6 +44,7 @@ int runBatchQtQProcessWaited(const std::string& BatchFile) {
             QString("/C"),
             QString::fromStdString(BatchFile)
     };
+
 
     //Process.start(Command, Arguments);
     //Process.waitForFinished(-1);
@@ -81,13 +62,14 @@ void Extract(const QString &fileName)
     QFileInfo fi(fileName);
     QString line = fi.path()+"/"+fi.baseName();
     qDebug() << line;
+    qDebug() << fileName ;
 
     QString systemCommand("apktool d -s --force-all -o " + line + " " + fileName);
     qDebug() << systemCommand;
 
     runBatchQtQProcessWaited(systemCommand.toStdString());
 }
-
+typedef QMap<QString, int> AppName ;
 typedef QMap<QString, int> PermissionCount;
 
 typedef QMap<QString, int> BuiltPermissionCount;
@@ -98,6 +80,8 @@ typedef QMap<QString, int> IntentCount ;
 class PermissionsAndIntents
 {
 public:
+    //AppName appName;
+    QString appName;
     BuiltPermissionCount builtPerms;
     CustomPermissionCount customPerms;
     IntentCount intentsActivity;
@@ -111,6 +95,7 @@ PermissionsAndIntents countPermissions(const QString &file){
     QXmlStreamReader reader;
     reader.setDevice(&f);
     PermissionsAndIntents pi;
+    pi.appName = file;
 
     while(reader.readNextStartElement()) {
         //qDebug() << reader.name();
@@ -183,6 +168,8 @@ PermissionsAndIntents countPermissions(const QString &file){
     return pi;
 }
 void reduce(PermissionsAndIntents &piTotal,const PermissionsAndIntents &pi) {
+    piTotal.appName = pi.appName;
+
     QMapIterator<QString, int> i(pi.builtPerms);
     while (i.hasNext()) {
         i.next();
@@ -232,7 +219,7 @@ void singleThreadedBothPermissionCount(const QStringList &files, BuiltPermission
         }
 
         // output permissions of file
-        //...
+
     }
 
 }
@@ -274,6 +261,57 @@ void printPermissions(const QMap<QString, int>& map)
     }
 }
 
+void printPermission(const PermissionsAndIntents& piTotal, bool printAppName=false)
+{
+    if (printAppName) {
+        if (piTotal.appName.contains("original"))
+            return;
+        QString q = "0e2e276aef3c474fd51acd726bdc2430/AndroidManifest.xml";
+        QString s1 = piTotal.appName.right(q.size());
+        QString s = s1.left(32);
+        qDebug() << "\nAppName: " << s;
+        //qDebug() << "\nAppName: " << piTotal.appName;
+    }
+
+    qDebug() << "\nBuilt-in Permissions:";
+    {
+        int counter=0;
+        QMapIterator<QString, int> i(piTotal.builtPerms);
+        while (i.hasNext()) {
+            i.next();
+            qDebug() << ++counter << ":" << i.key() << ": " << i.value() ;
+        }
+    }
+    qDebug() << "\nCustom Permissions:";
+    {
+        int counter=0;
+        QMapIterator<QString, int> i(piTotal.customPerms);
+        while (i.hasNext()) {
+            i.next();
+            qDebug() << ++counter << ":"<< i.key() << ": " << i.value() ;
+        }
+    }
+    qDebug() << "\nIntentsActivity:";
+    {
+        int counter=0;
+        QMapIterator<QString, int> i(piTotal.intentsActivity);
+        while (i.hasNext()) {
+            i.next();
+            qDebug() << ++counter << ":"<< i.key() << ": " << i.value() ;
+        }
+    }
+    qDebug() << "\nIntentsReceiver:";
+    {
+        int counter=0;
+        QMapIterator<QString, int> i(piTotal.intentsReceiver);
+        while (i.hasNext()) {
+            i.next();
+            qDebug() << ++counter << ":"<< i.key() << ": " << i.value() ;
+        }
+    }
+
+}
+
 int main(int argc, char *argv[])
 {
     QCoreApplication a(argc, argv);
@@ -305,45 +343,7 @@ int main(int argc, char *argv[])
     QStringList files = findFiles(sourcedir, QStringList() << "AndroidManifest.xml");
     qDebug() << files.count() << "files";
 
-    //qDebug() << "warmup";
-    /*{
-        PermissionCount total = singleThreadedPermissionCount(files);
 
-        qDebug() << "Output of permissions";
-
-        int builtPerms = 0;
-        int customPerms = 0;
-
-        QMapIterator<QString, int> i(total);
-        while (i.hasNext()) {
-            i.next();
-
-            if (i.key().contains("android.permission"))
-                builtPerms++;
-            else
-                customPerms++;
-
-            qDebug() << i.key() << ": " << i.value() ;
-        }
-        qDebug() << "Total number of unique build-in permissions:" << builtPerms;
-        qDebug() << "number of custom permissions are:" << customPerms;
-    }
-    */
-
-//    {
-//        BuiltPermissionCount builtPerms;
-//        CustomPermissionCount customPerms;
-//        singleThreadedBothPermissionCount(files, builtPerms, customPerms);
-
-//        qDebug() << "Total number of unique build-in permissions:" << builtPerms.size();
-//        qDebug() << "Total number of custom permissions are:" << customPerms.size();
-
-//        qDebug() << "Unique built in permissions:";
-//        printPermissions(builtPerms);
-
-//        qDebug() << "Unique custom permissions:";
-//        printPermissions(customPerms);
-//    }
 
     int singleThreadTime = 0;
     {
@@ -352,29 +352,16 @@ int main(int argc, char *argv[])
         PermissionsAndIntents piTotal;
         for (const QString &file : files) {
             PermissionsAndIntents pi = countPermissions(file);
+                printPermission(pi, true);
 
                 reduce(piTotal,pi);
-//            QMapIterator<QString, int> i(pi.builtPerms);
-//            while (i.hasNext()) {
-//                i.next();
-//                piTotal.builtPerms[i.key()] += i.value();
-//            }
-//            QMapIterator<QString, int> ic(pi.customPerms);
-//            while (ic.hasNext()) {
-//                ic.next();
-//                piTotal.customPerms[ic.key()] += ic.value();
-//            }
+
         }
         singleThreadTime = time.elapsed();
         qDebug() << "Single thread time elapsed" << singleThreadTime;
         qDebug() << "Total number of unique build-in permissions:" << piTotal.builtPerms.size();
         qDebug() << "Total number of custom permissions are:" << piTotal.customPerms.size();
 
-//        qDebug() << "Unique built in permissions:";
-//        printPermissions(piTotal.builtPerms);
-
-//        qDebug() << "Unique custom permissions:";
-//        printPermissions(piTotal.customPerms);
     }
     int mapReduceTime = 0;
     {
@@ -389,42 +376,7 @@ int main(int argc, char *argv[])
 
         qDebug() << "Multi thread MapReduce speedup x" << ((double)singleThreadTime - (double)mapReduceTime) / (double)mapReduceTime + 1;
 
-        qDebug() << "\nBuilt-in Permissions:";
-        {
-            int counter=0;
-            QMapIterator<QString, int> i(piTotal.builtPerms);
-            while (i.hasNext()) {
-                i.next();
-                qDebug() << ++counter << ":" << i.key() << ": " << i.value() ;
-            }
-        }
-        qDebug() << "\nCustom Permissions:";
-        {
-            int counter=0;
-            QMapIterator<QString, int> i(piTotal.customPerms);
-            while (i.hasNext()) {
-                i.next();
-                qDebug() << ++counter << ":"<< i.key() << ": " << i.value() ;
-            }
-        }
-        qDebug() << "\nIntentsActivity:";
-        {
-            int counter=0;
-            QMapIterator<QString, int> i(piTotal.intentsActivity);
-            while (i.hasNext()) {
-                i.next();
-                qDebug() << ++counter << ":"<< i.key() << ": " << i.value() ;
-            }
-        }
-        qDebug() << "\nIntentsReceiver:";
-        {
-            int counter=0;
-            QMapIterator<QString, int> i(piTotal.intentsReceiver);
-            while (i.hasNext()) {
-                i.next();
-                qDebug() << ++counter << ":"<< i.key() << ": " << i.value() ;
-            }
-        }
+        printPermission(piTotal, false);
 
     }
 
